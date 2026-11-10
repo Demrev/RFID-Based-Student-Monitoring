@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ESP32 RFID Student Attendance — Node.js + MySQL + Dashboard
 
 A local-network starter project based on your ESP32 + RC522 + 0.96-inch SSD1306 OLED (yellow/blue) + LEDs + buzzer setup. **Google Sheets is removed.** The ESP32 sends a scanned card's UID to a Node.js API; only the backend decides if the card is registered and saves attendance in MySQL. You register students through the dashboard.
@@ -194,3 +195,6 @@ Example unregistered response:
 ## Security and deployment notes
 
 This is a **local/trusted-network starter system**, not a production internet-hosted attendance product. The sample dashboard uses `express-session`'s **in-memory session store** (suitable only for development). HTTP on a LAN sends credentials/device keys without encryption. For internet or school-wide deployment: add HTTPS/TLS, a persistent session store, audit logs, role-based accounts, backups, HTTPS certificate validation on the ESP32, and an appropriate privacy/data-retention policy. RFID UIDs alone can be copied; this starter is **not** a strong physical access-control or anti-impersonation system. Avoid putting student personal details or API keys in public repositories.
+=======
+# RFID-Based-Student-Monitoring
+>>>>>>> aa17454fb374e97b7cf74f8816219178291f10e1
