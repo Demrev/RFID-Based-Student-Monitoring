@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attendance overview · RFID Console</title>
+  <meta name="theme-color" content="#f5f6f8">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <a class="sidebar-brand" href="#overview" aria-label="RFID Console home"><span class="brand-mark" aria-hidden="true">R</span><span class="sidebar-copy"><strong>RFID Console</strong><small>ATTENDANCE SYSTEM</small></span></a>
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="section-nav" title="Collapse sidebar">
+          <span class="hamburger-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+        </button>
+      </div>
+      <nav id="section-nav" aria-label="Sections">
+        <a href="#overview" class="nav-link active" data-screen="overview" aria-current="page"><span>Overview</span></a>
+        <a href="#attendance" class="nav-link" data-screen="attendance"><span>Attendance</span></a>
+        <a href="#students" class="nav-link" data-screen="students"><span>Students</span></a>
+        <a href="#unknown" class="nav-link" data-screen="unknown"><span>Unknown cards</span></a>
+      </nav>
+      <div class="sidebar-foot"><span class="live-dot"></span><span>Local system</span><small>Asia/Manila · UTC+8</small></div>
+    </aside>
+    <main class="content">
+      <header class="topbar">
+        <div><p class="eyebrow">RFID CONSOLE <span aria-hidden="true">/</span> <span id="page-breadcrumb">OVERVIEW</span></p><h1 id="page-title" tabindex="-1">Attendance overview</h1><p class="page-description" id="page-description">A quick summary of today’s attendance activity.</p></div>
+        <div class="top-actions"><span id="live-state" class="live-pill">Checking server</span><button class="button-outline" id="logout">Sign out</button></div>
+      </header>
+
+      <section class="screen is-active" id="screen-overview" data-screen-page="overview">
+        <section class="stats" aria-label="Attendance statistics">
+          <article class="stat-card"><div class="stat-label">Registered students</div><div class="stat-number" id="total-students">—</div><div class="stat-caption" id="active-students">Loading records</div></article>
+          <article class="stat-card"><div class="stat-label"><span class="stat-marker entry-marker"></span>Entries</div><div class="stat-number" id="total-entries">—</div><div class="stat-caption">Check-ins on selected date</div></article>
+          <article class="stat-card"><div class="stat-label"><span class="stat-marker exit-marker"></span>Exits</div><div class="stat-number" id="total-exits">—</div><div class="stat-caption">Check-outs on selected date</div></article>
+          <article class="stat-card"><div class="stat-label"><span class="stat-marker unique-marker"></span>Students scanned</div><div class="stat-number" id="total-unique">—</div><div class="stat-caption">Unique students on selected date</div></article>
+        </section>
+        <section class="panel overview-shortcuts">
+          <div class="panel-heading"><div><p class="section-kicker">QUICK ACCESS</p><h2>Where would you like to go?</h2><p class="section-description">Open a dedicated workspace for each task.</p></div></div>
+          <div class="shortcut-grid">
+            <a class="shortcut-card" href="#attendance" data-screen="attendance"><span class="shortcut-label">ATTENDANCE</span><strong>Review scan history</strong><span>Browse and export check-ins and check-outs.</span></a>
+            <a class="shortcut-card" href="#students" data-screen="students"><span class="shortcut-label">STUDENTS</span><strong>Manage student records</strong><span>Register students and manage card access.</span></a>
+            <a class="shortcut-card" href="#unknown" data-screen="unknown"><span class="shortcut-label">UNKNOWN CARDS</span><strong>Review unregistered scans</strong><span>Assign recently scanned cards to students.</span></a>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen" id="screen-attendance" data-screen-page="attendance" hidden>
+        <section class="toolbar" aria-label="Attendance date controls">
+          <div class="date-control"><label for="date">Attendance date <span class="muted">· Philippine time</span></label><input id="date" type="date"></div>
+          <div class="toolbar-buttons"><button id="today" class="button-outline">Today</button><button id="refresh" class="button-outline">Refresh</button><a id="export" class="primary" href="#">Export CSV</a></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><div><p class="section-kicker">ACTIVITY</p><h2>Attendance log</h2><p class="section-description">Latest scans for the selected date. Refreshes automatically.</p></div><label class="search-control"><span class="sr-only">Search attendance records</span><input type="search" id="attendance-search" placeholder="Search students or UID" aria-label="Search attendance"></label></div>
+          <div class="table-wrap"><table><thead><tr><th>Time <span class="th-sub">(PHT)</span></th><th>Student</th><th>Card UID</th><th>Event</th><th>Device</th></tr></thead><tbody id="attendance-body"><tr><td colspan="5" class="empty">Loading attendance…</td></tr></tbody></table></div>
+        </section>
+      </section>
+
+      <section class="screen" id="screen-students" data-screen-page="students" hidden>
+      <section class="two-columns">
+        <article class="panel">
+          <div class="panel-heading"><div><p class="section-kicker">ENROLLMENT</p><h2>Register a student</h2><p class="section-description">Assign a student record to an RFID card.</p></div></div>
+          <form id="student-form" class="student-form">
+            <div class="field"><label for="student-number">Student number</label><input id="student-number" required maxlength="40" placeholder="e.g. 2026-001" autocomplete="off"></div>
+            <div class="field"><label for="student-name">Full name</label><input id="student-name" required maxlength="120" placeholder="Student's full name" autocomplete="name"></div>
+            <div class="field"><label for="student-section">Section or course <span class="optional-label">Optional</span></label><input id="student-section" maxlength="80" placeholder="e.g. BSIT 3A"></div>
+            <div class="field"><label for="student-uid">Card UID <span class="optional-label">Hexadecimal</span></label><input id="student-uid" required maxlength="32" placeholder="e.g. E43E4101" autocapitalize="characters" autocomplete="off"></div>
+            <button type="submit" class="primary full">Register student</button>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><div><p class="section-kicker">DIRECTORY</p><h2>Registered students</h2><p class="section-description">Manage student details and card access.</p></div><label class="search-control"><span class="sr-only">Search students</span><input type="search" id="student-search" placeholder="Find a student" aria-label="Search students"></label></div>
+          <div class="table-wrap compact"><table><thead><tr><th>Student</th><th>RFID UID</th><th>Status</th><th>Actions</th></tr></thead><tbody id="student-body"><tr><td colspan="4" class="empty">Loading students…</td></tr></tbody></table></div>
+        </article>
+      </section>
+
+      </section>
+
+      <section class="screen" id="screen-unknown" data-screen-page="unknown" hidden>
+      <section class="panel">
+        <div class="panel-heading"><div><p class="section-kicker">REVIEW</p><h2>Unknown cards</h2><p class="section-description">Unregistered card scans. Register a card to assign it to a student.</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Card UID</th><th>Last scanned <span class="th-sub">(PHT)</span></th><th>Attempts</th><th>Action</th></tr></thead><tbody id="unknown-body"><tr><td colspan="4" class="empty">No unknown cards loaded yet</td></tr></tbody></table></div>
+      </section>
+      </section>
+      <footer class="footer-note">Attendance records are stored in MySQL. Scan times use the server clock.</footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="student-edit-dialog" class="student-dialog" aria-labelledby="student-edit-title">
+    <form id="student-edit-form" class="student-form">
+      <div class="dialog-heading"><p class="section-kicker">STUDENT DIRECTORY</p><h2 id="student-edit-title">Edit student</h2><p class="section-description">Update the student's details or assigned card.</p></div>
+      <input id="edit-student-id" type="hidden">
+      <div class="field"><label for="edit-student-number">Student number</label><input id="edit-student-number" required maxlength="40"></div>
+      <div class="field"><label for="edit-student-name">Full name</label><input id="edit-student-name" required minlength="2" maxlength="120"></div>
+      <div class="field"><label for="edit-student-section">Section / course <span class="muted">(optional)</span></label><input id="edit-student-section" maxlength="80"></div>
+      <div class="field"><label for="edit-student-uid">Card UID (hex)</label><input id="edit-student-uid" required maxlength="32" autocapitalize="characters"></div>
+      <div class="dialog-actions"><button type="button" class="button-outline" id="cancel-student-edit">Cancel</button><button type="submit" class="primary" id="save-student-edit">Save changes</button></div>
+    </form>
+  </dialog>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

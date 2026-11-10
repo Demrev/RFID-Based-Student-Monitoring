@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · RFID Attendance</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="brand-mark" aria-hidden="true">R</div>
+    <h1>RFID Console</h1>
+    <p class="muted">Administrator sign in</p>
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input id="username" autocomplete="username" required placeholder="Admin username">
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required placeholder="Password">
+      <p class="error-message" id="login-error" role="alert"></p>
+      <button type="submit" class="primary full">Sign in</button>
+    </form>
+    <p class="login-foot">ESP32 · Node.js · MySQL</p>
+  </main>
+  <script src="/assets/login.js" defer></script>
+</body>
+</html>
