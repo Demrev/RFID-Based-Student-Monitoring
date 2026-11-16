@@ -1,19 +1,20 @@
 'use strict';
 
-require('dotenv').config();
 const path = require('node:path');
+require('dotenv').config({path: path.join(__dirname, '.env')});
 const crypto = require('node:crypto');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
 const {rateLimit} = require('express-rate-limit');
-const mysql = require('mysql2/promise');
+const MySQLStore = require('express-mysql-session')(session);
+const {createPool, initializeDatabase} = require('./database');
 const {normalizeUid, philippineToday, dayRangeUtc, nextAttendanceEvent, csvCell} = require('./lib');
 
 function required(key, minLength = 1) {
   const value = process.env[key] || '';
   if (value.length < minLength || value.startsWith('CHANGE_THIS') || value.startsWith('YOUR_')) {
-    throw new Error(`Set ${key} in backend/.env before starting.`);
+    throw new Error(`Set ${key} in the hosting environment or backend/.env before starting.`);
   }
   return value;
 }
@@ -23,28 +24,27 @@ const ADMIN_USERNAME = required('ADMIN_USERNAME');
 const ADMIN_PASSWORD = required('ADMIN_PASSWORD', 8);
 const DEVICE_API_KEY = required('DEVICE_API_KEY', 16);
 const SESSION_SECRET = required('SESSION_SECRET', 32);
-const DB_NAME = required('DB_NAME');
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 0);
 const SCAN_COOLDOWN_MS = Number(process.env.SCAN_COOLDOWN_MS || 5000);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('Invalid PORT');
+if (!Number.isInteger(TRUST_PROXY_HOPS) || TRUST_PROXY_HOPS < 0 || TRUST_PROXY_HOPS > 5) throw new Error('TRUST_PROXY_HOPS must be between 0 and 5');
 if (!Number.isInteger(SCAN_COOLDOWN_MS) || SCAN_COOLDOWN_MS < 500 || SCAN_COOLDOWN_MS > 600000) {
   throw new Error('SCAN_COOLDOWN_MS must be between 500 and 600000.');
 }
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: Number(process.env.DB_PORT || 3306),
-  user: required('DB_USER'),
-  password: process.env.DB_PASSWORD || '',
-  database: DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  dateStrings: true,
-  timezone: 'Z',
-  decimalNumbers: true
-});
+const pool = createPool();
+const sessionStore = new MySQLStore({
+  createDatabaseTable: true,
+  endConnectionOnClose: false,
+  expiration: 8 * 60 * 60 * 1000,
+  schema: {tableName: 'admin_sessions'}
+}, pool);
+// Attach the rejection handler immediately, before the asynchronous table creation.
+const sessionReady = sessionStore.onReady().then(() => null, error => error);
 
 const app = express();
 app.disable('x-powered-by');
+if (TRUST_PROXY_HOPS) app.set('trust proxy', TRUST_PROXY_HOPS);
 app.use(helmet({contentSecurityPolicy: {
   directives: {defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'"],
     imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], objectSrc: ["'none'"]}
@@ -53,6 +53,7 @@ app.use(express.json({limit: '8kb'}));
 app.use(session({
   name: 'rfid_admin_session',
   secret: SESSION_SECRET,
+  store: sessionStore,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -61,7 +62,6 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production',
     maxAge: 8 * 60 * 60 * 1000
   }
-  // Default memory session store is development-only. See README before deployment.
 }));
 
 function constantTimeEquals(input, expected) {
@@ -98,6 +98,10 @@ const deviceLimiter = rateLimit({windowMs: 60 * 1000, limit: 120, standardHeader
 app.get('/api/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
+    await pool.query('SELECT 1 FROM students LIMIT 1');
+    await pool.query('SELECT 1 FROM attendance LIMIT 1');
+    await pool.query('SELECT 1 FROM unknown_cards LIMIT 1');
+    await pool.query('SELECT 1 FROM admin_sessions LIMIT 1');
     return res.json({ok: true, database: 'connected'});
   } catch {
     return res.status(503).json({ok: false, database: 'unavailable'});
@@ -374,7 +378,32 @@ app.use((error, req, res, next) => {
   res.status(500).json({error: 'Server/database error. Check Node.js console and MySQL configuration.'});
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`RFID dashboard running at http://localhost:${PORT}`);
-  console.log('For the ESP32, use your computer LAN IPv4 address, not localhost.');
+let server;
+async function start() {
+  if (process.env.DB_AUTO_INIT === 'true') await initializeDatabase(pool);
+  const sessionError = await sessionReady;
+  if (sessionError) throw sessionError;
+  await pool.query('SELECT 1');
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`RFID Based Attendance Monitoring listening on port ${PORT}`);
+  });
+}
+
+let stopping = false;
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  const timer = setTimeout(() => process.exit(1), 10000);
+  timer.unref();
+  if (server) await new Promise(resolve => server.close(resolve));
+  await sessionStore.close();
+  await pool.end();
+  clearTimeout(timer);
+}
+process.on('SIGTERM', () => shutdown().catch(() => process.exit(1)));
+process.on('SIGINT', () => shutdown().catch(() => process.exit(1)));
+start().catch(async error => {
+  console.error('Backend startup failed:', error.code || 'Check database configuration');
+  await shutdown();
+  process.exitCode = 1;
 });

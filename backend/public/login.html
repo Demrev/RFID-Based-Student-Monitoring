@@ -1,25 +1,72 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in · RFID Attendance</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · RFID Based Attendance Monitoring</title>
+  <meta name="theme-color" content="#0b0c0b">
+  <script src="/assets/theme.js"></script>
   <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <link rel="stylesheet" href="/assets/login.css">
 </head>
-<body class="login-page">
-  <main class="login-card">
-    <div class="brand-mark" aria-hidden="true">R</div>
-    <h1>RFID Console</h1>
-    <p class="muted">Administrator sign in</p>
+<body class="login-page dashboard-page">
+  <div class="login-background" aria-hidden="true">
+    <div class="login-network"></div>
+    <div class="login-signal login-signal-left"><span></span><span></span><span></span></div>
+    <div class="login-signal login-signal-right"><span></span><span></span><span></span></div>
+    <svg class="login-circuit" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" fill="none">
+      <g class="login-circuit-paths">
+        <path d="M0 240H180L260 320H430M0 640H160L260 540H430M1440 200H1270L1160 310H1010M1440 700H1290L1190 600H1010" />
+        <path d="M140 0V130L340 330V420M1300 900V780L1100 580V480" />
+      </g>
+      <g class="login-circuit-nodes">
+        <circle cx="180" cy="240" r="5"/><circle cx="260" cy="540" r="5"/>
+        <circle cx="1270" cy="200" r="5"/><circle cx="1190" cy="600" r="5"/>
+        <circle cx="340" cy="420" r="5"/><circle cx="1100" cy="480" r="5"/>
+      </g>
+    </svg>
+  </div>
+  <main class="login-layout">
+  <section class="login-card" aria-labelledby="login-title">
+  <header class="login-header">
+    <a class="login-wordmark" href="/login" aria-label="RFID Based Attendance Monitoring sign in">
+      <span class="brand-mark" aria-hidden="true"><img src="/assets/brand-logo.jpg" alt="" class="brand-logo"></span>
+      <span><strong>RFID Based</strong><small>Attendance Monitoring</small></span>
+    </a>
+    <button class="button-outline icon-button theme-toggle" id="theme-toggle" type="button" title="Switch to light mode" aria-label="Switch to light mode" aria-pressed="false">
+      <svg class="theme-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+      <svg class="theme-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z"/></svg>
+    </button>
+  </header>
+    <h1 id="login-title">Welcome back.</h1>
+    <p class="muted">Sign in to your attendance workspace.</p>
     <form id="login-form">
-      <label for="username">Username</label>
-      <input id="username" autocomplete="username" required placeholder="Admin username">
-      <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="current-password" required placeholder="Password">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" autocomplete="username" required placeholder="Enter admin username" autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <div class="password-wrap">
+          <input id="password" type="password" autocomplete="current-password" required placeholder="Enter password" aria-describedby="login-error">
+          <button type="button" id="toggle-password" class="password-toggle" aria-label="Show password">Show</button>
+        </div>
+      </div>
       <p class="error-message" id="login-error" role="alert"></p>
-      <button type="submit" class="primary full">Sign in</button>
+      <button type="submit" class="primary full login-submit">
+        <span class="login-spinner" aria-hidden="true" hidden></span>
+        <span id="login-button-label">Sign in</span><span class="login-submit-arrow" aria-hidden="true">→</span>
+      </button>
+      <p id="login-status" class="login-status" role="status" aria-live="polite"></p>
     </form>
-    <p class="login-foot">ESP32 · Node.js · MySQL</p>
+    <div class="login-foot">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7Z"/><path d="m8 12 3 3 5-6"/></svg>
+      <span>Administrator access only</span>
+    </div>
+  </section>
   </main>
+  <footer class="login-page-footer"><span>RFID Based · Attendance Monitoring</span><span>A more connected school day.</span></footer>
   <script src="/assets/login.js" defer></script>
 </body>
 </html>

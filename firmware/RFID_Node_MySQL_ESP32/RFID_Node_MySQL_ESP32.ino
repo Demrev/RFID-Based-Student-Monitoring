@@ -378,8 +378,16 @@ void showRFIDScreen(const String &status, const String &name, const String &sect
   display.setTextSize(1); display.setTextColor(SSD1306_BLACK);
   centerText(status, (bandH - 8) / 2, 1);
   display.setTextColor(SSD1306_WHITE);
-  showCenteredFitText(name, 26);
-  if (section.length()) showCenteredFitText(section, 43);
+
+  int16_t x1, y1; uint16_t w, h;
+  display.setTextSize(2);
+  display.getTextBounds(name, 0, 0, &x1, &y1, &w, &h);
+  if (w <= SCREEN_WIDTH - 4) {
+    centerText(name, section.length() ? 24 : 30, 2);
+  } else {
+    showCenteredFitText(name, section.length() ? 26 : 32);
+  }
+  if (section.length()) showCenteredFitText(section, 48);
   display.display();
 }
 
