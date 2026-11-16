@@ -133,6 +133,27 @@ constexpr size_t MAX_CACHED_STUDENTS = 256;
 std::vector<StudentProfile> studentProfiles;
 SemaphoreHandle_t profileMutex = nullptr;
 SemaphoreHandle_t networkMutex = nullptr;
+TaskHandle_t cardFeedbackTaskHandle = nullptr;
+
+// Sound runs separately so a slow HTTPS request cannot delay a beep or hold it on.
+void cardFeedbackTask(void *parameter) {
+  for (;;) {
+    const uint32_t pattern = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (pattern == 1) beepRegisteredCard();
+    else beepUnknownCard();
+  }
+}
+
+void signalCardDetected(bool recognized) {
+  setStatusLEDs(recognized);
+  if (cardFeedbackTaskHandle) {
+    xTaskNotify(cardFeedbackTaskHandle, recognized ? 1 : 2, eSetValueWithOverwrite);
+  } else {
+    // Fallback if the sound task could not be allocated.
+    if (recognized) beepRegisteredCard();
+    else beepUnknownCard();
+  }
+}
 
 // ------------------------
 // Utility helpers
@@ -257,12 +278,16 @@ void rememberStudentProfile(const String &uid, const ScanResult &result) {
   for (auto item = studentProfiles.begin(); item != studentProfiles.end(); ++item) {
     if (item->uid != uid) continue;
     if (result.outcome == "unknown") studentProfiles.erase(item);
-    else if (result.name.length()) { item->name = result.name.substring(0, 120); item->section = result.section.substring(0, 80); }
+    else if (result.name.length()) {
+      item->name = result.name.substring(0, 120);
+      item->section = result.section.substring(0, 80);
+      item->active = result.outcome != "inactive";
+    }
     xSemaphoreGive(profileMutex);
     return;
   }
   if (result.outcome != "unknown" && result.name.length() && studentProfiles.size() < MAX_CACHED_STUDENTS) {
-    studentProfiles.push_back({uid, result.name.substring(0, 120), result.section.substring(0, 80)});
+    studentProfiles.push_back({uid, result.name.substring(0, 120), result.section.substring(0, 80), result.outcome != "inactive"});
   }
   xSemaphoreGive(profileMutex);
 }
@@ -305,7 +330,7 @@ void syncStudentProfiles() {
       String uid = row["uid"] | "";
       String name = row["name"] | "";
       String section = row["section"] | "";
-      if (uid.length() && name.length()) fresh.push_back({uid, name.substring(0, 120), section.substring(0, 80)});
+      if (uid.length() && name.length()) fresh.push_back({uid, name.substring(0, 120), section.substring(0, 80), row["active"] | true});
     }
     if (document["nextCursor"].isNull()) break;
     String nextCursor = document["nextCursor"].as<String>();
@@ -573,6 +598,10 @@ void setup() {
   }
   profileMutex = xSemaphoreCreateMutex();
   networkMutex = xSemaphoreCreateMutex();
+  if (xTaskCreate(cardFeedbackTask, "card-feedback", 2048, nullptr, 2, &cardFeedbackTaskHandle) != pdPASS) {
+    cardFeedbackTaskHandle = nullptr;
+    Serial.println("Sound task unavailable; using direct detection feedback");
+  }
   if (profileMutex && networkMutex) {
     if (xTaskCreate(studentProfileTask, "student-cache", 8192, nullptr, 1, nullptr) != pdPASS) {
       Serial.println("Student cache task could not start; scan lookup remains available");
@@ -604,9 +633,13 @@ void loop() {
       lastSeenUID = uid;
       lastSeenMillis = now;
       StudentProfile profile;
-      if (findStudentProfile(uid, profile)) {
-        // Identity appears immediately. No green LED/beep until Railway saves it.
+      const bool cached = findStudentProfile(uid, profile);
+      // Detection feedback is immediate; ENTRY/EXIT still requires server confirmation.
+      signalCardDetected(cached && profile.active);
+      if (cached) {
         showRFIDScreen("CARD SCANNED", profile.name, profile.section);
+      } else {
+        showRFIDScreen("CARD DETECTED", "Unrecognized card");
       }
 
       // Backend handles student lookup, 5-second cooldown, and ENTRY/EXIT.
@@ -615,7 +648,6 @@ void loop() {
         Serial.println("Scan NOT saved: backend unavailable");
         showRFIDScreen("SERVER ERROR", "Not saved");
         setStatusLEDs(false);
-        beepUnknownCard();
         delay(900);
         turnOffStatusLEDs();
       } else if (result.outcome == "recorded" &&
@@ -623,21 +655,23 @@ void loop() {
         Serial.println("Saved " + result.eventType + " for " + result.name);
         showRFIDScreen(result.eventType, result.name, result.section);
         setStatusLEDs(true);        // green LED
-        beepRegisteredCard();       // single beep
         delay(1800);                // Give wrapped names/courses time to be read.
         turnOffStatusLEDs();
       } else if (result.outcome == "unknown" || result.outcome == "inactive") {
         showRFIDScreen(result.outcome == "inactive" ? "INACTIVE" : "UNKNOWN", result.name, result.section);
         setStatusLEDs(false);       // red LED
-        beepUnknownCard();          // two beeps
         delay(900);
         turnOffStatusLEDs();
       } else if (result.outcome == "cooldown") {
         showRFIDScreen("ALREADY SCANNED", result.name, result.section);
-        delay(650);                 // no LED or buzzer, no new record
+        setStatusLEDs(true);
+        delay(650);                 // Detection feedback already played; no new record.
+        turnOffStatusLEDs();
       } else {
         showRFIDScreen("SERVER ERROR", "Try again");
+        setStatusLEDs(false);
         delay(900);
+        turnOffStatusLEDs();
       }
     }
   }

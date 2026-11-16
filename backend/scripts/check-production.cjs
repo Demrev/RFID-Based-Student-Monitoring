@@ -94,9 +94,11 @@ function request(route, method = 'GET', body, authenticated = true) {
   const directory = await deviceDirectory('');
   assert.equal(directory.status, 200);
   assert.equal(directory.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await directory.json(), {rows: [{uid: 'AABBCCDD', name: 'Deployment Test', section: 'Test'}], nextCursor: null});
+  assert.deepEqual(await directory.json(), {rows: [{uid: 'AABBCCDD', name: 'Deployment Test', section: 'Test', active: true}], nextCursor: null});
   assert.equal((await deviceDirectory('?after=not-a-number')).status, 400);
   assert.equal((await request('/api/admin/students/' + students.rows[0].id + '/active', 'PATCH', {active: false})).status, 200);
+  const disabledDirectory = await (await deviceDirectory('')).json();
+  assert.equal(disabledDirectory.rows[0].active, false, 'Readers receive inactive status for immediate red LED feedback');
   const inactiveScan = await fetch(base + '/api/device/scans', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Device-Key': deviceKey}, body: JSON.stringify({uid: 'AABBCCDD', deviceId: 'TEST-DEVICE'})});
   assert.equal((await inactiveScan.json()).outcome, 'inactive', 'A previously cached card still requires current server authorization');
   assert.equal((await request('/api/admin/students/' + students.rows[0].id + '/active', 'PATCH', {active: true})).status, 200);
