@@ -124,6 +124,18 @@ app.post('/api/auth/logout', requireAdmin, ensureSafeMutation, (req, res, next) 
   req.session.destroy(err => err ? next(err) : res.json({ok: true}));
 });
 
+// Small authenticated pages let readers show a cached identity before logging completes.
+// The scan endpoint still validates current registration/access and decides ENTRY/EXIT.
+app.get('/api/device/students', deviceLimiter, requireDevice, async (req, res) => {
+  const cursor = String(req.query.after || '0');
+  if (!/^\d{1,20}$/.test(cursor)) return res.status(400).json({error: 'Invalid student cursor'});
+  const [rows] = await pool.execute('SELECT id, uid, full_name, section FROM students WHERE id > ? ORDER BY id LIMIT 65', [cursor]);
+  const page = rows.slice(0, 64);
+  res.set('Cache-Control', 'no-store');
+  return res.json({rows: page.map(({uid, full_name, section}) => ({uid, name: full_name, section: section || ''})),
+    nextCursor: rows.length > 64 ? String(page[page.length - 1].id) : null});
+});
+
 // Device-facing endpoint: the backend, not the ESP32, decides identity and ENTRY/EXIT.
 app.post('/api/device/scans', deviceLimiter, requireDevice, ensureSafeMutation, async (req, res) => {
   const uid = normalizeUid(req.body?.uid);

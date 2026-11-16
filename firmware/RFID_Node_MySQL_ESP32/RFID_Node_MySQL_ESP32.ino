@@ -3,13 +3,13 @@
   RC522 -> backend validates UID -> MySQL records ENTRY/EXIT.
   SSD1306 (yellow/blue), red/green LEDs, buzzer, 12-hour Philippine clock.
   Install ArduinoJson v7, Adafruit SSD1306/GFX and MFRC522 libraries.
-  Configure BACKEND_URL to your computer LAN IPv4 address, not localhost.
+  Railway HTTPS backend; verify its certificate using RailwayCertificate.h.
 */
 
 //     https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
 #include <WiFi.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -19,6 +19,9 @@
 #include "time.h"
 #include <ArduinoJson.h>
 #include "ScanResult.h"
+#include "RailwayCertificate.h"
+#include "StudentProfile.h"
+#include "freertos/semphr.h"
 
 // ------------------------
 // Display configuration
@@ -94,10 +97,8 @@ void turnOffStatusLEDs() {
 const char* WIFI_SSID = "MONICA _2.4G";
 const char* WIFI_PASSWORD = "Butchay1222";
 
-// Run the Node.js server on your PC connected to the SAME Wi-Fi.
-// On Windows: run ipconfig, copy the PC's IPv4 address.
-// Do not use localhost or 127.0.0.1 here; those point to the ESP32.
-const char* BACKEND_URL = "http://192.168.101.7:3000/api/device/scans";
+// The ESP32 needs internet access. Match DEVICE_API_KEY to Railway's variable.
+const char* BACKEND_URL = "https://rfid-based-student-monitoring-production.up.railway.app/api/device/scans";
 const char* DEVICE_API_KEY = "db3372cb1d402cd088e5f9baa481ed6f";
 const char* DEVICE_ID = "ESP32-01";
 
@@ -127,6 +128,11 @@ unsigned long scanAnimLastMillis = 0;
 
 bool prevWiFiConnected = false;
 unsigned long lastWiFiRetry = 0;
+
+constexpr size_t MAX_CACHED_STUDENTS = 256;
+std::vector<StudentProfile> studentProfiles;
+SemaphoreHandle_t profileMutex = nullptr;
+SemaphoreHandle_t networkMutex = nullptr;
 
 // ------------------------
 // Utility helpers
@@ -233,8 +239,100 @@ bool readRFID(String &uidOut) {
 // ------------------------
 // Networking & logging
 // ------------------------
+bool findStudentProfile(const String &uid, StudentProfile &profile) {
+  if (!profileMutex) return false;
+  bool found = false;
+  xSemaphoreTake(profileMutex, portMAX_DELAY);
+  for (const auto &item : studentProfiles) {
+    if (item.uid == uid) { profile = item; found = true; break; }
+  }
+  xSemaphoreGive(profileMutex);
+  return found;
+}
+
+void rememberStudentProfile(const String &uid, const ScanResult &result) {
+  if (!profileMutex) return;
+  xSemaphoreTake(profileMutex, portMAX_DELAY);
+  // Remove stale identities after the server reports that a card is unknown.
+  for (auto item = studentProfiles.begin(); item != studentProfiles.end(); ++item) {
+    if (item->uid != uid) continue;
+    if (result.outcome == "unknown") studentProfiles.erase(item);
+    else if (result.name.length()) { item->name = result.name.substring(0, 120); item->section = result.section.substring(0, 80); }
+    xSemaphoreGive(profileMutex);
+    return;
+  }
+  if (result.outcome != "unknown" && result.name.length() && studentProfiles.size() < MAX_CACHED_STUDENTS) {
+    studentProfiles.push_back({uid, result.name.substring(0, 120), result.section.substring(0, 80)});
+  }
+  xSemaphoreGive(profileMutex);
+}
+
+void syncStudentProfiles() {
+  if (WiFi.status() != WL_CONNECTED || !networkMutex || !profileMutex) return;
+  struct tm clock;
+  if (!getLocalTime(&clock, 1)) return;
+  std::vector<StudentProfile> fresh;
+  String endpoint = BACKEND_URL;
+  const int suffix = endpoint.lastIndexOf("/scans");
+  if (suffix < 0) return;
+  endpoint = endpoint.substring(0, suffix) + "/students";
+  String cursor = "0";
+  while (fresh.size() < MAX_CACHED_STUDENTS) {
+    // Only one TLS connection uses memory at a time; yield to foreground scans.
+    if (xSemaphoreTake(networkMutex, 0) != pdTRUE) return;
+    WiFiClientSecure client;
+    client.setCACert(RAILWAY_ROOT_CA);
+    client.setHandshakeTimeout(8);
+    HTTPClient http;
+    http.setConnectTimeout(8000);
+    http.setTimeout(5000);
+    http.useHTTP10(true); // A plain response stream is easy to parse without a body copy.
+    bool valid = http.begin(client, endpoint + "?after=" + cursor);
+    JsonDocument document;
+    if (valid) {
+      http.addHeader("X-Device-Key", DEVICE_API_KEY);
+      valid = http.GET() == 200;
+      if (valid) valid = !deserializeJson(document, http.getStream());
+    }
+    http.end();
+    xSemaphoreGive(networkMutex);
+    if (!valid || !document["rows"].is<JsonArray>()) {
+      Serial.println("Student cache sync unavailable; scan lookup remains available");
+      return; // Keep the last complete cache on network errors.
+    }
+    for (JsonObject row : document["rows"].as<JsonArray>()) {
+      if (fresh.size() >= MAX_CACHED_STUDENTS) break;
+      String uid = row["uid"] | "";
+      String name = row["name"] | "";
+      String section = row["section"] | "";
+      if (uid.length() && name.length()) fresh.push_back({uid, name.substring(0, 120), section.substring(0, 80)});
+    }
+    if (document["nextCursor"].isNull()) break;
+    String nextCursor = document["nextCursor"].as<String>();
+    if (!nextCursor.length() || nextCursor == cursor) return;
+    cursor = nextCursor;
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+  xSemaphoreTake(profileMutex, portMAX_DELAY);
+  studentProfiles.swap(fresh);
+  const size_t count = studentProfiles.size();
+  xSemaphoreGive(profileMutex);
+  Serial.printf("Student display cache ready: %u profiles\n", (unsigned)count);
+}
+
+void studentProfileTask(void *parameter) {
+  for (;;) {
+    syncStudentProfiles();
+    // Frequent short retries until NTP/initial profiles are available.
+    xSemaphoreTake(profileMutex, portMAX_DELAY);
+    const bool empty = studentProfiles.empty();
+    xSemaphoreGive(profileMutex);
+    vTaskDelay(pdMS_TO_TICKS(empty ? 5000 : 30000));
+  }
+}
+
 void setupTime() {
-  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER, "time.google.com", "time.cloudflare.com");
 }
 
 void connectToWiFi(unsigned long timeoutMs = 10000) {
@@ -255,9 +353,19 @@ ScanResult sendCardToBackend(const String &uid) {
     return result;
   }
 
-  WiFiClient client;
+  // Certificate validation needs the correct date. NTP starts on Wi-Fi connection.
+  struct tm tlsTime;
+  if (!getLocalTime(&tlsTime, 10000)) {
+    Serial.println("Cannot scan: waiting for internet time synchronization");
+    return result;
+  }
+
+  WiFiClientSecure client;
+  client.setCACert(RAILWAY_ROOT_CA);
+  client.setHandshakeTimeout(12);
   HTTPClient http;
-  http.setTimeout(4000);  // Network trouble will still delay OLED feedback
+  http.setConnectTimeout(12000);
+  http.setTimeout(10000);  // Allow time for the internet connection to Railway.
 
   if (!http.begin(client, BACKEND_URL)) {
     Serial.println("Cannot connect to backend URL");
@@ -272,13 +380,16 @@ ScanResult sendCardToBackend(const String &uid) {
   String requestBody;
   serializeJson(request, requestBody);
 
+  if (networkMutex) xSemaphoreTake(networkMutex, portMAX_DELAY);
   int statusCode = http.POST(requestBody);
   String body = statusCode > 0 ? http.getString() : "";
   Serial.printf("Backend HTTP status: %d\n", statusCode);
   if (statusCode != 200) {
     // Check backend logs for DB errors or an incorrect API key.
     Serial.println("Backend error: " + body);
+    if (statusCode < 0) Serial.println("Network/TLS error: " + http.errorToString(statusCode));
     http.end();
+    if (networkMutex) xSemaphoreGive(networkMutex);
     return result;
   }
 
@@ -287,6 +398,7 @@ ScanResult sendCardToBackend(const String &uid) {
   if (error) {
     Serial.println("Invalid JSON response");
     http.end();
+    if (networkMutex) xSemaphoreGive(networkMutex);
     return result;
   }
 
@@ -296,6 +408,8 @@ ScanResult sendCardToBackend(const String &uid) {
   result.eventType = String(response["event"] | "");
   result.serverOk = (response["ok"] | false);
   http.end();
+  if (networkMutex) xSemaphoreGive(networkMutex);
+  if (result.serverOk) rememberStudentProfile(uid, result);
   return result;
 }
 
@@ -360,34 +474,52 @@ void showDefaultScreen() {
   display.display();
 }
 
-void showCenteredFitText(const String &text, int y) {
-  display.setTextSize(1);
-  String visible = text;
-  int16_t x1, y1;
-  uint16_t w, h;
-  while (visible.length() > 0) {
-    display.getTextBounds(visible, 0, 0, &x1, &y1, &w, &h);
-    if (w <= SCREEN_WIDTH - 4) break;
-    visible.remove(visible.length() - 1);
+void drawFittedBlock(const String &text, int top, int height) {
+  String value = text;
+  value.replace('\n', ' ');
+  value.replace('\r', ' ');
+  value.trim();
+  if (!value.length()) return;
+  // The built-in font is 6x8 pixels. Short text gets 2x size; long text wraps.
+  if (value.length() <= 10 && height >= 16) {
+    centerText(value, top + (height - 16) / 2, 2);
+    return;
   }
-  centerText(visible, y, 1);
+  const int columns = (SCREEN_WIDTH - 8) / 6; // 20 characters, 4px side margins.
+  String lines[2];
+  int count = 0;
+  while (value.length() && count < 2) {
+    int take = min((int)value.length(), columns);
+    if ((int)value.length() > columns) {
+      int space = value.lastIndexOf(' ', columns);
+      if (space > 0) take = space;
+    }
+    lines[count] = value.substring(0, take);
+    value = value.substring(take);
+    value.trim();
+    if (count == 1 && value.length()) {
+      lines[count] = lines[count].substring(0, columns - 3) + "...";
+    }
+    count++;
+  }
+  const int lineHeight = 9;
+  const int firstY = top + (height - (count * lineHeight - 1)) / 2;
+  for (int line = 0; line < count; line++) centerText(lines[line], firstY + line * lineHeight, 1);
 }
 
 void showRFIDScreen(const String &status, const String &name, const String &section = "") {
-  display.clearDisplay(); const int bandH = 18; display.fillRect(0, 0, SCREEN_WIDTH, bandH, SSD1306_WHITE);
+  display.clearDisplay(); const int bandH = 16; display.fillRect(0, 0, SCREEN_WIDTH, bandH, SSD1306_WHITE);
   display.setTextSize(1); display.setTextColor(SSD1306_BLACK);
   centerText(status, (bandH - 8) / 2, 1);
   display.setTextColor(SSD1306_WHITE);
 
-  int16_t x1, y1; uint16_t w, h;
-  display.setTextSize(2);
-  display.getTextBounds(name, 0, 0, &x1, &y1, &w, &h);
-  if (w <= SCREEN_WIDTH - 4) {
-    centerText(name, section.length() ? 24 : 30, 2);
+  if (section.length()) {
+    drawFittedBlock(name, 19, 21);
+    display.drawFastHLine(14, 41, SCREEN_WIDTH - 28, SSD1306_WHITE);
+    drawFittedBlock(section, 44, 18);
   } else {
-    showCenteredFitText(name, section.length() ? 26 : 32);
+    drawFittedBlock(name, 24, 30);
   }
-  if (section.length()) showCenteredFitText(section, 48);
   display.display();
 }
 
@@ -415,6 +547,7 @@ void setup() {
   Serial.println("SSD1306 OLED detected!");
   display.clearDisplay();
   display.setRotation(0);
+  display.setTextWrap(false); // All scan text is explicitly fitted to the display.
   display.setTextColor(SSD1306_WHITE);
   display.display();
 
@@ -437,6 +570,13 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     setupTime(); showWifiConnectedMessage(1200); prevWiFiConnected = true;
+  }
+  profileMutex = xSemaphoreCreateMutex();
+  networkMutex = xSemaphoreCreateMutex();
+  if (profileMutex && networkMutex) {
+    if (xTaskCreate(studentProfileTask, "student-cache", 8192, nullptr, 1, nullptr) != pdPASS) {
+      Serial.println("Student cache task could not start; scan lookup remains available");
+    }
   }
 }
 
@@ -463,7 +603,11 @@ void loop() {
     } else {
       lastSeenUID = uid;
       lastSeenMillis = now;
-      showRFIDScreen("CHECKING", "Please wait");
+      StudentProfile profile;
+      if (findStudentProfile(uid, profile)) {
+        // Identity appears immediately. No green LED/beep until Railway saves it.
+        showRFIDScreen("CARD SCANNED", profile.name, profile.section);
+      }
 
       // Backend handles student lookup, 5-second cooldown, and ENTRY/EXIT.
       ScanResult result = sendCardToBackend(uid);
@@ -480,16 +624,16 @@ void loop() {
         showRFIDScreen(result.eventType, result.name, result.section);
         setStatusLEDs(true);        // green LED
         beepRegisteredCard();       // single beep
-        delay(1000);
+        delay(1800);                // Give wrapped names/courses time to be read.
         turnOffStatusLEDs();
       } else if (result.outcome == "unknown" || result.outcome == "inactive") {
-        showRFIDScreen(result.outcome == "inactive" ? "INACTIVE" : "UNKNOWN", result.name);
+        showRFIDScreen(result.outcome == "inactive" ? "INACTIVE" : "UNKNOWN", result.name, result.section);
         setStatusLEDs(false);       // red LED
         beepUnknownCard();          // two beeps
         delay(900);
         turnOffStatusLEDs();
       } else if (result.outcome == "cooldown") {
-        showRFIDScreen("WAIT", "Scan later");
+        showRFIDScreen("ALREADY SCANNED", result.name, result.section);
         delay(650);                 // no LED or buzzer, no new record
       } else {
         showRFIDScreen("SERVER ERROR", "Try again");
